@@ -1,0 +1,6 @@
+# .env file
+.env
+
+# airflow logs except for folder itself
+logs/*
+!logs/.keep
