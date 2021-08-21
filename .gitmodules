@@ -1,0 +1,3 @@
+[submodule "terraform-redshift-cluster"]
+	path = terraform-redshift-cluster
+	url = git@github.com:nialloriordan/terraform-redshift-cluster

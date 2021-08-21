@@ -4,3 +4,9 @@
 # airflow logs except for folder itself
 logs/*
 !logs/.keep
+
+# cpython from airflow
+*.cpython*
+
+# python cache
+__pycache__
