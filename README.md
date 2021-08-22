@@ -1,240 +1,93 @@
-# Airflow 2.0 <!-- omit in toc -->
+# Airflow Redshift Pipeline <!-- omit in toc -->
 
 <details open>
     <summary>Table of Contents</summary>
 
 - [Overview](#overview)
 - [Quick Start](#quick-start)
-  - [TL;DR](#tldr)
-  - [Initialising Environment](#initialising-environment)
-    - [Set file permissions](#set-file-permissions)
-    - [Create admin user and password for web authentication](#create-admin-user-and-password-for-web-authentication)
-    - [Specify the Airflow Docker image](#specify-the-airflow-docker-image)
-    - [Create a Fernet key for Airflow](#create-a-fernet-key-for-airflow)
   - [Initialise Airflow](#initialise-airflow)
-  - [Run Airflow](#run-airflow)
-- [Architecture](#architecture)
-  - [Airflow:](#airflow)
-    - [Metadata Database - Postgres](#metadata-database---postgres)
-    - [Scheduler](#scheduler)
-    - [Executor](#executor)
-  - [Celery](#celery)
-    - [Redis - Message Broker](#redis---message-broker)
-    - [Flower - Celery Monitoring Tool](#flower---celery-monitoring-tool)
+  - [Create Redshift Cluster](#create-redshift-cluster)
+  - [Airflow Connections](#airflow-connections)
+    - [AWS Credentials](#aws-credentials)
+    - [Redshift Cluster](#redshift-cluster)
+  - [Airflow DAG](#airflow-dag)
 - [Structure](#structure)
 
 </details>
 
 ## Overview
 
-The purpose of this overview is to provide a base configuration for using Airflow 2.0 with Docker
+The purpose of this overview is to provide an ETL pipeline in Redshift that is orchestrated and scheduled via Airflow 2.0
 
 ## Quick Start
+### Initialise Airflow
+
+Follow the guidelines in [Airflow-Docker](https://github.com/nialloriordan/airflow-docker) repository to initialise Airflow 2.0.
+
+### Create Redshift Cluster
+
+Follow the guidelines in [terraform-redshift-cluster](https://github.com/nialloriordan/terraform-redshift-cluster) repository to create the Redshift Cluster via Terraform.
+   
+Note: 
+- Take note of the `redshift_cluster_dns` that will be outputted once the Redshift Cluster is created as this will be required for Airflow
+- Don't forget to kill the cluster once finished, by running `terraform destroy`
+
+### Airflow Connections
 
 <details>
     <summary> Show/Hide Details</summary>
 
-This guide is based off Airflow's quick start to [Running Airflow in Docker](https://airflow.apache.org/docs/apache-airflow/stable/start/docker.html)
+In order for Airflow to connect to run the ETL pipeline, you will need to provide your AWS credentials and details for connecting to the Redshift cluster.
 
-### TL;DR
+Open the Airflow UI view the Connections tab:
 
-Create an `.env` file as follows:
-```bash
-AIRFLOW_UID=<YOUR LOCAL USER ID>
-AIRFLOW_GID=<YOUR LOCAL GROUP ID>
-AIRFLOW_IMAGE_NAME=<AIRFLOW DOCKER IMAGE e.g apache/airflow:2.1.2>
-_AIRFLOW_WWW_USER_USERNAME=<AIRFLOW ADMIN USERNAME>
-_AIRFLOW_WWW_USER_PASSWORD=<AIRFLOW ADMIN PASSWORD>
-FERNET_KEY=<YOUR FERNET KEY>
-```
+![connections](images/connections.png)
 
-Initialise Airflow:
-```bash
-docker-compose up airflow-init
-```
+#### AWS Credentials
 
-Start all Airflow services:
+Create a new connection with the following details:
 
-```bash
-docker-compose up
-```
+- **Conn Id**: Enter aws_credentials.
+- **Conn Type**: Enter Amazon Web Services.
+- **Login**: Enter your Access key ID from your IAM User credentials.
+- **Password**: Enter your Secret access key from your IAM User credentials.
 
-Place your dag files within [dags/](dags/) and your plugins within [plugins/](plugins/).
+![aws credentials](images/aws_credentials.png)
 
-### Initialising Environment
+#### Redshift Cluster
 
-#### Set file permissions
+Create a new connection with the following details:
 
-Within our [docker-compose](docker-compose.yaml) file we are mounting a number of directories i.e [config/](config/), [dags/](dags/), logs/ and [plugins/](plugins/). To avoid issue with non matching file permissions, we need to ensure that our mounted volumes within every docker container use the native Linux filesystem user/group permissions.  
+- Conn Id: Enter redshift.
+- Conn Type: Enter Postgres.
+- Host: Enter the endpoint of your Redshift cluster, that was outputted after creating your Redshift cluster.
+- Schema: Enter the redshift schema created when launching the Redshift Cluster. This is the Redshift database you want to connect to.
+- Login: Enter your username you created when launching your Redshift cluster.
+- Password: Enter the password you created when launching your Redshift cluster.
+- Port: Enter the port you created when launching your Redshift cluster e.g. 5439.
+- Extra: `{"keepalives_idle":30}` as per [Postgres Hook Documentation](https://airflow.apache.org/docs/apache-airflow-providers-postgres/stable/_api/airflow/providers/postgres/hooks/postgres/index.html) this should be set to a value less than 300 to prevent issues with long running SQL queries.
 
-To fix this we can specify the UID and GID for Airflow and pass this to our env file:
-```bash
-echo -e "AIRFLOW_UID=$(id -u)\nAIRFLOW_GID=0" > .env
-```
-
-
-#### Create admin user and password for web authentication
-
-Airflow 2.0 requires use of the RBAC-UI, which means users are required to specify a password prior to login.
-
-To set the admin user, update the .env file to include values for `_AIRFLOW_WWW_USER_USERNAME` and `_AIRFLOW_WWW_USER_PASSWORD`:
-```bash
-#.env
-_AIRFLOW_WWW_USER_USERNAME=<ADMIN USERNAME>
-_AIRFLOW_WWW_USER_PASSWORD=<ADMIN PASSWORD>
-```
-
-In order to create additional users, you can use the following CLI command and you will then be prompted to enter a password for the user:
-
-```bash
-./airflow.sh airflow users create \
-    --username niall.oriordan \
-    --firstname Niall \
-    --lastname O\'Riordan \
-    --role Op \
-    --email oriordn@tcd.ie
-```
-
-For more information about different roles, visit Airflow's [Access Control documentation](https://airflow.apache.org/docs/apache-airflow/stable/security/access-control.html). Additionally, more information about the `airflow users create` command can be found [here](https://airflow.apache.org/docs/apache-airflow/stable/cli-and-env-variables-ref.html#create_repeat1).
-
-#### Specify the Airflow Docker image
-
-Within the env file specify the airflow docker image to use:
-
-```bash
-#.env
-AIRFLOW_IMAGE_NAME=<AIRFLOW DOCKER IMAGE e.g apache/airflow:2.1.2>
-```
-
-#### Create a Fernet key for Airflow
-
-Airflow users [Fernet](https://github.com/fernet/spec/) to encrypt passwords within its connection and variable configuration. 
-
-To generate the key you will need to install [cryptography](https://pypi.org/project/cryptography/) and then run the following command:
-
-```bash
-python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
-```
-
-With the newly created Fernet key, update your `.env` file as follows:
-
-```bash
-# .env
-FERNET_KEY=<YOUR FERNET KEY>
-```
-
-It is important to keep the generated fernet key safe as it is guaranteed that a password encrypted using it cannot be manipulated or read without the key.
-
-### Initialise Airflow
-
-It is necessary to initialise airflow by running any database migrations and creating the first admin user. This can be achieved by running:
-
-```bash
-docker-compose up airflow-init
-```
-
-After initialization is complete, the last few messages should read like below:
-```bash
-airflow-init_1       | Upgrades done
-airflow-init_1       | Admin user airflow created
-airflow-init_1       | 2.1.2
-start_airflow-init_1 exited with code 0
-```
-
-### Run Airflow
-
-To start all Airflow services run:
-
-```bash
-docker-compose up
-```
-
-After listing the running containers in another terminal you should see a similar output to the one below:
-
-```bash
-CONTAINER ID   IMAGE                  COMMAND                  CREATED              STATUS                        PORTS                                                 NAMES
-b60b1cf71c84   apache/airflow:2.1.2   "/usr/bin/dumb-init …"   About a minute ago   Up About a minute (healthy)   0.0.0.0:5555->5555/tcp, :::5555->5555/tcp, 8080/tcp   airflow-docker_flower_1
-cc8d0e7d4313   apache/airflow:2.1.2   "/usr/bin/dumb-init …"   About a minute ago   Up About a minute (healthy)   8080/tcp                                              airflow-docker_airflow-scheduler_1
-d8dd9720bffd   apache/airflow:2.1.2   "/usr/bin/dumb-init …"   About a minute ago   Up About a minute (healthy)   8080/tcp                                              airflow-docker_airflow-worker_1
-8887045f093e   apache/airflow:2.1.2   "/usr/bin/dumb-init …"   About a minute ago   Up About a minute (healthy)   0.0.0.0:8080->8080/tcp, :::8080->8080/tcp             airflow-docker_airflow-webserver_1
-cf55784b4c05   postgres:13            "docker-entrypoint.s…"   About a minute ago   Up About a minute (healthy)   5432/tcp                                              airflow-docker_postgres_1
-e6b51c4d2d68   redis:latest           "docker-entrypoint.s…"   About a minute ago   Up About a minute (healthy)   0.0.0.0:6379->6379/tcp, :::6379->6379/tcp             airflow-docker_redis_1
-```
-
-Note:
-- It may take a few minutes for the containers to finish starting up
-
-Place your dag files within [dags/](dags/) and your plugins within [plugins/](plugins/).
+![Redshift credentials](images/redshift_credentials.png)
 
 </details>
 
-## Architecture
+### Airflow DAG
 
-<details>
+<details open>
     <summary> Show/Hide Details</summary>
 
-All applications are packaged up using `Docker` to isolate the software from its env so that it works in different development environments. We also make use of the docker compose tool to define and run multiple Docker container applications.
+This DAG consists of five main tasks:
+1. Create Tables
+2. Stage Event Tables
+3. Load Fact Table
+4. Load Dimension Tables
+5. Run Data Quality Checks
 
-### [Airflow](https://airflow.apache.org/):
+![Airflow DAG](images/airflow_dag.png)
 
-Airflow consists of several components:
+Tasks for staging event tables and loading dimension tables makes use of Airflow 2.0's Task Group feature to organise tasks within the DAG's graph view in the Airflow 2.0 UI.
 
- * `Metadata Database` - Contains information about the status of tasks, DAGs, Variables, connections, etc.
- * `Scheduler` - Reads from the Metadata database and is responsible for adding the necessary tasks to the queue
- * `Executor` - Works closely with the Scheduler to determine what resources are needed to complete the tasks as they are queued
- * `Web server` - HTTP Server provides access to DAG/task status information
-
-#### Metadata Database - Postgres
-
-For the Metadata Database a number of databases can be chosen. More information [here](https://airflow.apache.org/docs/apache-airflow/stable/howto/set-up-database.html).
-
-For our purposes we have chosen a Postgres backend.
-
-#### Scheduler
-
-A new feature for Airflow 2.0 is the option to provide multiple schedulers. This new feature enables high availability, scalability and greater performance.
-
-More information [here](https://airflow.apache.org/docs/apache-airflow/stable/concepts/scheduler.html).
-
-For instance we can scale up to two schedulers by running:
-```bash
-docker-compose up --scale airflow-scheduler=2
-```
-
-#### Executor
-
-Airflow provides the option for Local or Remote executors. Local executors usually run tasks inside the scheduler process, while Remote executors usually run those tasks remotely via a pool of workers.
-
-The default executor is a Sequential Executor which runs tasks sequentially without the option for parallelism.
-
-### [Celery](https://docs.celeryproject.org/en/stable/getting-started/introduction.html)
-
-We have chosen the Celery Executor as our Remote Executor to scale out the number of workers.
-
-For instance we can scale up to three celery clusters by running:
-```bash
-docker-compose up --scale airflow-worker=3
-```
-
-Or we could scale up to three celery clusters and two schedulers by running:
-```bash
-docker-compose up --scale airflow-worker=3 --scale airflow-scheduler=2
-```
-#### [Redis](https://redis.io/) - Message Broker
-
-In order to use a Celery Executor a Celery backend such as RabbitMQ, Redis, etc. are required. For our purposes Redis was chosen.
-
-Redis is a distributed in memory key value database. For Airflow it is used as a message broker by delivering messages to the celery workers.
-
-#### [Flower](https://flower.readthedocs.io/en/latest/) - Celery Monitoring Tool
-
-Flower is a tool used for monitoring and administering Celery clusters.
-
-Flower is accessible on port 5555.
-
-For example after scaling to three celery workers our Flower tool should provide a dashboard which looks as follows:
-
-![Flower](images/airflow_flower.png)
+![Task Groups](images/airflow_dag_task_groups.png)
 
 </details>
 
@@ -247,8 +100,11 @@ For example after scaling to three celery workers our Flower tool should provide
 - [dags](dags/): folder for airflow dags
 - [logs/](logs/): (included in .gitignore) folder for airflow logs
 - [plugins/](plugins/): folder for airflow plugins
+  - [helpers/](plugins/helpers/): helper functions for Airflow
+  - [operators/](plugins/operators/): Custom Airflow operators
 - [airflow.sh](airflow.sh): convenient bash file to run Airflow CLI commands
 - [airflow.cfg](config/airflow.cfg): airflow config file
 - [images/](images/): images for [README](README.md)
+- [terraform-redshift-cluster](terraform-redshift-cluster) terraform redshift submodule
 
 </details>

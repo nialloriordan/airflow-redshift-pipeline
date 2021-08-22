@@ -10,3 +10,6 @@ logs/*
 
 # python cache
 __pycache__
+
+# DS Store
+.DS_Store
